@@ -1,0 +1,171 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Establishes Common VPC Endpoints
+
+# When using cfn-lint, you might want to exclude rule W1001 so that warnings of the following
+# types are suppressed:
+#
+# Warning	Cfn-Lint	Ref to resource "rInternetGateway" that may not be available when
+# condition "cCreateInternetGateway3Azs" is True and when condition "cCreateInternetGateway"
+# is False at Resources/rTier1IgwRoute3/Properties/GatewayId/Ref
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: System Classification
+      Parameters:
+      - pSystem
+      - pApp
+    - Label:
+        default: VPC Configuration
+      Parameters:
+      - pVpcId
+      - pVpcCidr
+      - pSubnetIds
+    - Label:
+        default: Endpoint Options
+      Parameters:
+      - pCreateSsmEndpoints
+      - pCreateS3Endpoint
+
+    ParameterLabels:
+      pSystem:
+        default: System Identifier
+      pApp:
+        default: Application Identifier
+      pVpcId:
+        default: VPC Id
+      pVpcCidr:
+        default: VPC CIDR Block
+      pSubnetIds:
+        default: List of Subnet IDs
+      pCreateSsmEndpoints:
+        default: Create AWS Systems Manager Interface Endpoints?
+      pCreateS3Endpoint:
+        default: Create S3 Gateway Endpoint?
+
+Parameters:
+  pSystem:
+    Type: String
+    Description: Used to qualify IAM role path
+    Default: infra
+
+  pApp:
+    Type: String
+    Description: Used to qualify resource names
+    Default: vpcep
+
+  pVpcId:
+    Description: VPC ID
+    Type: AWS::EC2::VPC::Id
+
+  pVpcCidr:
+    Description: VPC CIDR Block
+    Type: String
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+
+  pSubnetIds:
+    Description: VPC ID
+    Type: List<AWS::EC2::Subnet::Id>
+
+  pCreateSsmEndpoints:
+    Type: String
+    Description: Whether AWS Systems Manager interface endpoints should be created
+    Default: true
+    AllowedValues: [true, false]
+
+  pCreateS3Endpoint:
+    Type: String
+    Description: Whether S3 endpoint should be created
+    Default: true
+    AllowedValues: [true, false]
+
+Conditions:
+
+  cCreateSsmEndpoints: !Equals [ !Ref 'pCreateSsmEndpoints', true ]
+  cCreateS3Endpoint:   !Or [ !Equals [ !Ref 'pCreateSsmEndpoints', true ], !Equals [ !Ref 'pCreateS3Endpoint', true ] ]
+
+Resources:
+  rS3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: cCreateS3Endpoint
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      VpcId: !Ref pVpcId
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal: '*'
+            Action: S3:GetsObject
+            Resource:
+              !Sub | 
+              - arn:aws:s3:::aws-ssm-${AWS::Region}/*
+              - arn:aws:s3:::aws-windows-downloads-${AWS::Region}/*
+              - arn:aws:s3:::amazon-ssm-${AWS::Region}/*
+              - arn:aws:s3:::${AWS::Region}-birdwatcher-prod/*
+              - arn:aws:s3:::patch-baseline-snapshot-${AWS::Region}/*
+
+  rSsmEndpointsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: cCreateSsmEndpoints
+    Properties:
+      GroupName: !Sub '${pSystem}-${pApp}-endpoints-ssm'
+      VpcId: !Ref pVpcId
+      GroupDescription: Allow traffic from managed EC2 instances to SSM
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref pVpcCidr
+
+  rSsmEndpointSsm:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: cCreateSsmEndpoints
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      VpcId: !Ref pVpcId
+      SecurityGroupIds:
+        - !Ref rSsmEndpointsSecurityGroup
+      PrivateDnsEnabled: true
+      SubnetIds: !Ref pSubnetIds
+
+  rSsmEndpointEc2Messages:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: cCreateSsmEndpoints
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages # Calls from SSM Agent to SSM
+      VpcEndpointType: Interface
+      VpcId: !Ref pVpcId
+      SecurityGroupIds:
+        - !Ref rSsmEndpointsSecurityGroup
+      PrivateDnsEnabled: true
+      SubnetIds: !Ref pSubnetIds
+
+  rSsmEndpointEc2:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: cCreateSsmEndpoints
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2 # Supports VSS-enabled snapshots
+      VpcEndpointType: Interface
+      VpcId: !Ref pVpcId
+      SecurityGroupIds:
+        - !Ref rSsmEndpointsSecurityGroup
+      PrivateDnsEnabled: true
+      SubnetIds: !Ref pSubnetIds
+
+  rSsmEndpointSsmMessages:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: cCreateSsmEndpoints
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages # Supports Session Manager
+      VpcEndpointType: Interface
+      VpcId: !Ref pVpcId
+      SecurityGroupIds:
+        - !Ref rSsmEndpointsSecurityGroup
+      PrivateDnsEnabled: true
+      SubnetIds: !Ref pSubnetIds
