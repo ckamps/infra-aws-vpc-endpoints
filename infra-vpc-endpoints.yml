@@ -1,6 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
 
-Description: Establishes Common VPC Endpoints
+# Initially, this template addresses common VPC interface and gateway endpoints required to support 
+# AWS Systems Manager integration with EC2 instances.
+
+Description: Establishes VPC Endpoints
 
 Metadata:
   AWS::CloudFormation::Interface:
